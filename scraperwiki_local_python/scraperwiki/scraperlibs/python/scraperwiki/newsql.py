@@ -1,0 +1,266 @@
+import re
+import datetime
+import scraperwiki
+import pytz
+
+import json
+import urllib, urllib2
+
+server = '127.0.0.1'
+port = 80
+scrapername = ''
+runid = ''
+attachables = []
+verify = ''
+
+
+class SqliteError(Exception):  pass
+class NoSuchTableSqliteError(SqliteError):  pass
+
+attachlist = [ ]
+
+def strunc(v, t):
+    if not t or len(v) < t:
+        return v
+    return "%s..." % v[:t]
+
+def strencode_trunc(v, t):
+    if type(v) == str:
+        v = v.decode('utf-8')
+    else:
+        v = unicode(v)
+
+    try:
+        return strunc(v, t).encode('utf-8')
+    except:
+        return "---"
+
+
+def ifsencode_trunc(v, t):
+    if type(v) in [int, float]:
+        return v
+    return strencode_trunc(v, t)
+
+
+
+
+def execute(sqlquery, data=None, verbose=1):
+        # helpfully wrap singletons into a list, as is done for the % operator, because singleton tuples can be hard to understand
+    if data is not None and "?" in sqlquery and type(data) not in [list, tuple]:
+        data = [data]
+        
+    global attachlist
+    
+    m = {"maincommand":'sqliteexecute', "sqlquery":sqlquery, "data":data, "attachlist":attachlist}
+    result = scraperwiki.datastore.make_request(m, attachlist)
+    if "Error" in result:
+        print 'Sent ', m
+        raise databaseexception(result)
+    if "status" not in result and "keys" not in result:
+        raise Exception(str(result))
+    
+    # list type for second field in message dump
+    if verbose:
+        if data == None:
+            ldata = [ ]
+        elif type(data) in [tuple, list]:
+            ldata = [ ifsencode_trunc(v, 50)  for v in data ]
+        elif type(data) == dict:
+            ldata = [ ifsencode_trunc(v, 50)  for v in data.values() ]
+        else:
+            ldata = [ str(data) ]
+        scraperwiki.dumpMessage({'message_type':'sqlitecall', 'command':'sqliteexecute', "val1":sqlquery, "lval2":ldata})
+    
+    return result
+    
+
+
+def databaseexception(arg):
+
+    if isinstance(arg, str) or isinstance(arg, unicode):
+        errmap = json.loads(arg)        
+        if isinstance(errmap, unicode):
+            errmap = json.loads(errmap)
+    else:
+        errmap = arg    
+    print errmap
+    
+    if 'Error' in errmap:
+        mess = errmap["Error"]
+    else:
+        mess = errmap["error"]        
+    for k, v in errmap.items():
+        if k.lower() != "Error":
+            mess = "%s; %s:%s" % (mess, k, v)
+    
+    if re.match('sqlite3.Error: no such table:', mess):
+        return NoSuchTableSqliteError(mess)
+        
+    if re.match('DB Error: \(OperationalError\) no such table:', mess):
+        return NoSuchTableSqliteError(mess)
+        
+    return SqliteError(mess)
+        
+
+
+
+def save(unique_keys, data, table_name="swdata", verbose=2, date=None):
+    if unique_keys != None and type(unique_keys) not in [ list, tuple ]:
+        raise databaseexception({ "Error":'unique_keys must a list or tuple', "unique_keys_type":str(type(unique_keys)) })
+
+    def convdata(unique_keys, scraper_data):
+        if unique_keys:
+            for key in unique_keys:
+                if key not in scraper_data:
+                    return { "Error":'unique_keys must be a subset of data', "bad_key":key }
+                if scraper_data[key] == None:
+                    return { "Error":'unique_key value should not be None', "bad_key":key }
+        jdata = { }
+        for key, value in scraper_data.items():
+            if not key:
+                return { "Error": 'key must not be blank', "bad_key":key }
+            if type(key) not in [unicode, str]:
+                return { "Error":'key must be string type', "bad_key":key }
+            if not re.match("[a-zA-Z0-9_\- ]+$", key):
+                return { "Error":'key must be simple text', "bad_key":key }
+            
+            if type(value) == datetime.date:
+                value = value.isoformat()
+            elif type(value) == datetime.datetime:
+                if value.tzinfo is None:
+                    value = value.isoformat()
+                else:
+                    value = value.astimezone(pytz.timezone('UTC')).isoformat()
+                    assert "+00:00" in value
+                    value = value.replace("+00:00", "")
+            elif value == None:
+                pass
+            elif isinstance(value, SqliteError):
+                return {"Error": str(value)}
+            elif type(value) == str:
+                try:
+                    value = value.decode("utf-8")
+                except:
+                    return {"Error": "Binary strings must be utf-8 encoded"}
+            elif type(value) not in [int, bool, float, unicode, str]:
+                value = unicode(value)
+            jdata[key] = value
+        return jdata
+            
+
+    if type(data) == dict:
+        rjdata = convdata(unique_keys, data)
+        if rjdata.get("Error"):
+            raise databaseexception(rjdata)
+        if date:
+            rjdata["date"] = date
+    else:
+        rjdata = [ ]
+        for ldata in data:
+            ljdata = convdata(unique_keys, ldata)
+            if ljdata.get("Error"):
+                raise databaseexception(ljdata)
+            rjdata.append(ljdata)
+    global attachlist
+    result = scraperwiki.datastore.make_request({"maincommand":'save_sqlite', "unique_keys":unique_keys, "data":rjdata, "swdatatblname":table_name}, attachlist)
+
+    if "Error" in result:
+        raise databaseexception(result)
+
+    if verbose >= 2:
+        pdata = {}
+        if type(data) == dict:
+            for key, value in data.items():
+                pdata[strencode_trunc(key, 50)] = strencode_trunc(value, 50)
+        elif data:
+            for key, value in data[0].items():
+                pdata[strencode_trunc(key, 50)] = strencode_trunc(value, 50)
+            pdata["number_records"] = "Number Records: %d" % len(data)
+        scraperwiki.dumpMessage({'message_type':'data', 'content': pdata})
+    return result
+
+
+def attach(name, asname=None, verbose=1):
+    global attachlist
+    attachlist.append({"name":name, "asname":asname or name})
+#    result = scraperwiki.datastore.make_request({"maincommand":'sqlitecommand', "command":"attach", "name":name, "asname":asname})
+#    if "Error" in result:
+#        raise databaseexception(result)
+#    if "status" not in result:
+#        raise Exception("possible signal timeout: "+str(result))
+#        scraperwiki.dumpMessage({'message_type':'data', 'content': pdata})
+#    return result
+
+
+def commit(verbose=1):
+    global attachlist
+    result = scraperwiki.datastore.make_request({"maincommand":'sqlitecommand', "command":"commit"},attachlist)
+    if "Error" in result:
+        raise databaseexception(result)
+    if "status" not in result:
+        raise Exception("possible signal timeout: "+str(result))
+        scraperwiki.dumpMessage({'message_type':'data', 'content': pdata})
+    return result    
+    
+
+
+def select(sqlquery, data=None, verbose=1):
+    sqlquery = "select %s" % sqlquery   # maybe check if select or another command is there already?
+    result = execute(sqlquery, data, verbose=verbose)
+    return [ dict(zip(result["keys"], d))  for d in result["data"] ]
+
+
+def show_tables(dbname=""):
+    name = "sqlite_master"
+    if dbname:
+        name = "`%s`.%s" % (dbname, name)
+    result = execute("select tbl_name, sql from %s where type='table'" % name)
+    return dict(result["data"])
+
+
+def table_info(name):
+    sname = name.split(".")
+    if len(sname) == 2:
+        result = execute("PRAGMA %s.table_info(`%s`)" % tuple(sname))
+    else:
+        result = execute("PRAGMA table_info(`%s`)" % name)
+    return [ dict(zip(result["keys"], d))  for d in result["data"] ]
+
+
+# everything strings, blob type actually redundant because sqlalchemy not able to handle sqlite way of doing blob; treats as binary
+typesmessaged = [ ]
+def save_var(name, value, verbose=2):
+    vtype = type(value).__name__
+    if vtype not in ["int", "float", "str", "unicode", "NoneType"]:
+        if vtype not in typesmessaged:
+            print "*** type %s not supported by save_var; try using pickle.dumps()" % vtype
+            typesmessaged.append(vtype)
+    data = {"name":name, "value_blob":unicode(value), "type":vtype}
+    save(unique_keys=["name"], data=data, table_name="swvariables", verbose=verbose)
+    
+
+def get_var(name, default=None, verbose=2):
+    try:
+        result = execute("select value_blob, type from swvariables where name=?", (name,), verbose)
+    except NoSuchTableSqliteError, e:
+        return default
+    except:
+        # Doesn't seem to be catching the no such table.
+        return default        
+        
+    data = result.get("data", None)
+    if not data:
+        return default
+    val, vtype = data[0]
+    if vtype == "int":
+        return int(val)
+    if vtype == "float":
+        return float(val)
+    if vtype == "str":
+        return str(val)
+    if vtype == "NoneType":
+        assert val == "None", val
+        return None
+    return val  # comes out unicode
+    
+    
