@@ -1,19 +1,22 @@
 # ScraperWiki Local Python
 
-Use this if you want to develop and test a ScraperWiki Python scraper locally. The code in the scraperwiki directory is a subset of the [ScraperWiki repository](https://bitbucket.org/ScraperWiki/scraperwiki/src). Using the ScraperWiki source to emulate the fuctions was the main goal of this project.
+Use this if you want to locally develop and test a Python ScraperWiki scraper. The code in the scraperwiki_local_python/scraperwiki directory is a subset of the [ScraperWiki repository](https://bitbucket.org/ScraperWiki/scraperwiki/src). 
+
+Using the ScraperWiki source to emulate the functions was the main goal of this project.
 
 ## Features
 
 * Saves data to local SQLite database
 * Scraped pages are cached to filesystem
-* Uses ScraperWiki source to emulate functions
+* Supports all of the functions at https://scraperwiki.com/docs/python/python_help_documentation/
+* Uses the ScraperWiki source to emulate functions
 
 ## Usage
      
-Download the scraperwiki_local_python folder into your working directory and add `import scraperwiki_local_python as scraperwiki` to your scraper (be sure to remove the "scraperwiki_local_python as " part before saving your scraper at ScraperWiki)
+Download the scraperwiki_local_python folder into your working directory and, in your scraper, replace the `import scraperwiki` line with `import scraperwiki_local_python as scraperwiki` (be sure to revert this change and replace `import scraperwiki_local_python as scraperwiki` with `import scraperwiki` before saving your scraper at ScraperWiki)
 
-The database and the page cache will be saved in a folder with the same name as your python script in your working directory.
-        
+The SQLite database and the scraped page cache will be saved to a folder in your working directory. E.g. Running `python examples.py` will create an examples_data folder with page cache folder and a defaultdb.sqlite database inside of it.
+
 ## License
 
 GPLv3 

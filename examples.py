@@ -18,3 +18,15 @@ print scraperwiki.sqlite.show_tables()
 info = scraperwiki.sqlite.table_info(name="swdata")
 for column in info:
     print column['name'], column['type']
+
+url = "http://www.madingley.org/uploaded/Hansard_08.07.2010.pdf"
+pdfdata = scraperwiki.scrape(url)
+print "The pdf file has %d bytes" % len(pdfdata)
+
+xmldata = scraperwiki.pdftoxml(pdfdata)
+print "After converting to xml it has %d bytes" % len(xmldata)
+print "The first 2000 characters are: ", xmldata[:2000]
+
+print scraperwiki.geo.gb_postcode_to_latlng('ME7 9AA')
+
+print scraperwiki.utils.swimport("scraperwiki")
